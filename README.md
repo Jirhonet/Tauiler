@@ -42,6 +42,8 @@ SUPER is either Windows key. Default shortcuts:
 
 F11 stays application-native. Tauiler recognizes borderless native fullscreen and leaves it alone. Only one Tauiler-controlled fullscreen window per monitor is active. Custom/native fullscreen behavior still needs application-specific validation.
 
+Workspace switches focus the eligible window under the stationary cursor as soon as the destination windows are visible and placed. Workspace shortcuts include this focus step while paused; ordinary hover focus remains paused.
+
 Workspaces map to the current Windows desktop order. Missing desktops are created on demand, up to the requested slot. Tauiler does not delete desktops on exit. Existing layout trees are keyed by desktop GUID and monitor device identity, so external switching preserves separate trees.
 
 ## Configuration

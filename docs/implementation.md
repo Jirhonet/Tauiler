@@ -121,3 +121,10 @@ SUPER+Shift+1..9 / 0 now moves the focused managed window and then switches to t
 A monitor/workspace layout with one tiled leaf now uses native maximization through asynchronous WINDOWPLACEMENT, preserving the app's normal restore rectangle. The native maximize capability is retained for a lone tile so Windows calculates work-area bounds rather than covering the taskbar. Apps without that capability keep the existing full-work-area tiling behavior. The window is first moved to its assigned monitor when necessary. Adding or restoring a second tiled window clears native maximization and restores the split layout. Floating/minimized windows are excluded, fullscreen remains distinct, and pause leaves native window management alone. Explicit floating restores an automatically maximized tile to its normal state.
 
 Native regression fixtures use actual monitor work areas and check IsZoomed for the last tile after minimizing a sibling, normal split states after restoring it, and independent maximization on two monitors.
+
+
+## Stationary cursor focus on workspace switches — 2026-10-16
+
+Desktop changes schedule a one-shot focus request independently of cursor movement. The request waits for the destination desktop and cursor monitor's visible layout, retries while the shell transition or foreground policy blocks focus, and expires after two seconds without adding a settling delay. Known menu, capture, dialog and drag guards remain in force. Native workspace changes honor focus_follows_cursor and pause. Explicit workspace/move-and-follow shortcuts focus their destination as part of the command, including while paused. Successful focus clears the request so later keyboard focus choices are not overwritten.
+
+A native regression uses two disposable windows and a stationary real cursor to check active and explicitly paused focus requests, plus paused implicit-focus suppression. It never switches actual desktops or reconciles existing application windows. A deterministic state check covers destination matching, configuration/pause rules and expiry.

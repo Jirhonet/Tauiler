@@ -68,6 +68,7 @@ thread_local! {
     static DIRTY_QUEUED:Cell<bool>=const {Cell::new(false)};
     static POINTER_WINDOW:Cell<Option<WindowId>>=const {Cell::new(None)};
     static TRAY_MODERN:Cell<bool>=const {Cell::new(false)};
+    static NATIVE_TEST:Cell<bool>=const {Cell::new(false)};
     static CREATION_PLAN:RefCell<Option<CreationPlan>>=const {RefCell::new(None)};
 }
 enum Event {
@@ -1047,6 +1048,25 @@ unsafe fn creation_request(sender: WPARAM, parameter: LPARAM) -> LRESULT {
     }
 }
 
+struct WorkspaceFocus {
+    desktop: u128,
+    expires: Instant,
+    explicit: bool,
+}
+impl WorkspaceFocus {
+    fn new(desktop: u128, explicit: bool) -> Self {
+        Self {
+            desktop,
+            expires: Instant::now() + Duration::from_secs(2),
+            explicit,
+        }
+    }
+    fn ready(&self, desktop: u128, paused: bool, follows_cursor: bool) -> bool {
+        self.desktop == desktop
+            && self.expires > Instant::now()
+            && (self.explicit || (!paused && follows_cursor))
+    }
+}
 struct Controller {
     config: Config,
     path: PathBuf,
@@ -1063,6 +1083,7 @@ struct Controller {
     resize_frame_at: Option<Instant>,
     resize_frames: HashMap<WindowId, FrameInsets>,
     last_cursor: Point,
+    workspace_focus: Option<WorkspaceFocus>,
     launcher_until: Instant,
     pending_launcher: bool,
     last_reconcile: Instant,
@@ -1124,6 +1145,7 @@ impl Controller {
             resize_frame_at: None,
             resize_frames: HashMap::new(),
             last_cursor: cursor(),
+            workspace_focus: None,
             launcher_until: Instant::now(),
             pending_launcher: false,
             last_reconcile: Instant::now(),
@@ -1279,6 +1301,15 @@ impl Controller {
                 .and_then(|d| Ok((desktop_id(d)?, d.get_index()? + 1)))
             {
                 Ok((d, slot)) => {
+                    if d != self.current
+                        && !self
+                            .workspace_focus
+                            .as_ref()
+                            .is_some_and(|f| f.explicit && f.expires > Instant::now())
+                    {
+                        self.workspace_focus = (!self.paused && self.config.focus_follows_cursor)
+                            .then(|| WorkspaceFocus::new(d, false));
+                    }
                     self.current = d;
                     self.current_slot = slot;
                 }
@@ -1753,58 +1784,94 @@ impl Controller {
         let p = cursor();
         let moved = p != self.last_cursor;
         self.last_cursor = p;
-        if moved
-            && !self.paused
-            && self.config.focus_follows_cursor
+        if self
+            .workspace_focus
+            .as_ref()
+            .is_some_and(|f| f.expires <= Instant::now())
+        {
+            self.workspace_focus = None;
+        }
+        let workspace_focus = self
+            .workspace_focus
+            .as_ref()
+            .is_some_and(|f| f.ready(self.current, self.paused, self.config.focus_follows_cursor));
+        if ((moved && !self.paused && self.config.focus_follows_cursor) || workspace_focus)
             && self.drag.is_none()
             && self.native_drag.is_none()
-            && Instant::now() > self.launcher_until
+            && (workspace_focus || Instant::now() > self.launcher_until)
+            && (!workspace_focus || self.workspace_focus_geometry_ready(p))
+            && self.focus_under_cursor(p)
+            && workspace_focus
         {
-            unsafe {
-                if GetAsyncKeyState(VK_LBUTTON as i32) < 0
-                    || GetAsyncKeyState(VK_RBUTTON as i32) < 0
-                {
-                    return;
-                }
-                let fg = GetForegroundWindow();
-                if !fg.is_null() && (!GetWindow(fg, GW_OWNER).is_null() || IsWindowEnabled(fg) == 0)
-                {
-                    return;
-                }
-                let mut gui: GUITHREADINFO = zeroed();
-                gui.cbSize = size_of::<GUITHREADINFO>() as u32;
-                if GetGUIThreadInfo(0, &mut gui) != 0
-                    && (gui.flags
-                        & (GUI_INMENUMODE
-                            | GUI_INMOVESIZE
-                            | GUI_POPUPMENUMODE
-                            | GUI_SYSTEMMENUMODE)
-                        != 0
-                        || !gui.hwndCapture.is_null())
-                {
-                    return;
-                }
-                if [
-                    "startmenuexperiencehost.exe",
-                    "searchhost.exe",
-                    "searchapp.exe",
-                    "shellexperiencehost.exe",
-                ]
-                .contains(&executable(fg).as_str())
-                {
-                    return;
-                }
-                let hovered = GetAncestor(WindowFromPoint(POINT { x: p.x, y: p.y }), GA_ROOT);
-                if self
-                    .records
-                    .get(&(hovered as usize))
-                    .is_some_and(|r| r.desktop == self.current)
-                    && IsWindowEnabled(hovered) != 0
-                    && hovered != fg
-                {
-                    SetForegroundWindow(hovered);
-                }
+            self.workspace_focus = None;
+        }
+    }
+    fn workspace_focus_geometry_ready(&self, point: Point) -> bool {
+        let Some(monitor) = self.monitors.iter().find(|m| m.full.contains(point)) else {
+            return false;
+        };
+        self.placement()
+            .iter()
+            .filter(|(id, _)| {
+                self.records
+                    .get(id)
+                    .is_some_and(|r| r.monitor == monitor.id)
+            })
+            .all(|(id, target)| {
+                self.valid(*id)
+                    && !cloaked(*id as HWND)
+                    && visible_rect(*id as HWND).is_some_and(|r| r.near(*target, 2))
+            })
+    }
+    fn focus_under_cursor(&self, point: Point) -> bool {
+        unsafe {
+            if GetAsyncKeyState(VK_LBUTTON as i32) < 0 || GetAsyncKeyState(VK_RBUTTON as i32) < 0 {
+                return false;
             }
+            let fg = GetForegroundWindow();
+            if !fg.is_null() && (!GetWindow(fg, GW_OWNER).is_null() || IsWindowEnabled(fg) == 0) {
+                return false;
+            }
+            let mut gui: GUITHREADINFO = zeroed();
+            gui.cbSize = size_of::<GUITHREADINFO>() as u32;
+            if GetGUIThreadInfo(0, &mut gui) != 0
+                && (gui.flags
+                    & (GUI_INMENUMODE | GUI_INMOVESIZE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE)
+                    != 0
+                    || !gui.hwndCapture.is_null())
+            {
+                return false;
+            }
+            if [
+                "startmenuexperiencehost.exe",
+                "searchhost.exe",
+                "searchapp.exe",
+                "shellexperiencehost.exe",
+            ]
+            .contains(&executable(fg).as_str())
+            {
+                return false;
+            }
+            let hovered = GetAncestor(
+                WindowFromPoint(POINT {
+                    x: point.x,
+                    y: point.y,
+                }),
+                GA_ROOT,
+            );
+            let id = hovered as usize;
+            if self
+                .records
+                .get(&id)
+                .is_some_and(|r| r.desktop == self.current && !r.minimized)
+                && self.valid(id)
+                && !cloaked(hovered)
+                && IsWindowVisible(hovered) != 0
+                && IsWindowEnabled(hovered) != 0
+            {
+                return hovered == fg || SetForegroundWindow(hovered) != 0;
+            }
+            false
         }
     }
     fn workspace(&mut self, slot: u32, moving: bool, id: WindowId) -> Result<(), Box<dyn Error>> {
@@ -1834,6 +1901,8 @@ impl Controller {
         }
         self.dirty = true;
         winvd::switch_desktop(slot - 1).map_err(|e| format!("{e:?}"))?;
+        let destination = desktop_id(winvd::get_desktop(slot - 1)).map_err(|e| format!("{e:?}"))?;
+        self.workspace_focus = Some(WorkspaceFocus::new(destination, true));
         Ok(())
     }
     fn action(&mut self, action: Action) -> bool {
@@ -1982,6 +2051,7 @@ impl Controller {
                             self.reinsert(id, p);
                         }
                     } else {
+                        self.workspace_focus = None;
                         unsafe {
                             SetForegroundWindow(next as HWND);
                         }
@@ -2345,6 +2415,11 @@ impl Controller {
     }
 }
 fn user_mouse_interaction() -> bool {
+    // Integration controllers only own disposable windows. User input must not
+    // make their asynchronous geometry assertions nondeterministic.
+    if NATIVE_TEST.with(Cell::get) {
+        return false;
+    }
     unsafe {
         if GetAsyncKeyState(VK_LBUTTON as i32) < 0 || GetAsyncKeyState(VK_RBUTTON as i32) < 0 {
             return true;
@@ -2579,7 +2654,15 @@ fn dispatch_event(controller: &mut Controller, resources: &Resources, event: Eve
     controller.event(event)
 }
 
+struct NativeTestScope;
+impl Drop for NativeTestScope {
+    fn drop(&mut self) {
+        NATIVE_TEST.with(|state| state.set(false));
+    }
+}
 fn self_test(settings: &Config) -> Result<(), Box<dyn Error>> {
+    NATIVE_TEST.with(|state| state.set(true));
+    let _input_scope = NativeTestScope;
     unsafe {
         let name = wide("Tauiler.SelfTest");
         let module = GetModuleHandleW(std::ptr::null());
@@ -2655,6 +2738,7 @@ fn self_test(settings: &Config) -> Result<(), Box<dyn Error>> {
             drop(desktop_probe);
             test_creation_override(resources.window)?;
             test_monitor_adoption(a, b)?;
+            test_workspace_cursor_focus(a, b)?;
             let area = monitors().first().ok_or("no native test monitor")?.work;
             let mut l = Layout::default();
             l.insert(a as usize, area, area.center(), None);
@@ -3470,6 +3554,110 @@ fn test_creation_override(controller: HWND) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn test_workspace_cursor_focus(a: HWND, b: HWND) -> Result<(), Box<dyn Error>> {
+    if unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 || GetAsyncKeyState(VK_RBUTTON as i32) < 0 }
+    {
+        println!("Stationary workspace focus check skipped: user mouse interaction is active");
+        return Ok(());
+    }
+
+    let mut c = Controller::new(
+        Config {
+            native_workspaces: false,
+            ..Config::default()
+        },
+        PathBuf::from("unused"),
+    )?;
+    let point = cursor();
+    let Some(monitor) = c.monitors.iter().find(|m| m.work.contains(point)).cloned() else {
+        println!("Stationary workspace focus check skipped: pointer outside monitor work areas");
+        return Ok(());
+    };
+    unsafe {
+        ShowWindow(a, SW_RESTORE);
+        ShowWindow(b, SW_RESTORE);
+    }
+    place(
+        a,
+        Rect {
+            x: point.x - 80,
+            y: point.y - 50,
+            width: 300,
+            height: 200,
+        },
+    );
+    let away = c
+        .monitors
+        .iter()
+        .find(|m| !m.full.contains(point))
+        .map(|m| m.work.center())
+        .unwrap_or(Point {
+            x: if point.x < monitor.work.center().x {
+                monitor.work.x + monitor.work.width - 160
+            } else {
+                monitor.work.x + 160
+            },
+            y: if point.y < monitor.work.center().y {
+                monitor.work.y + monitor.work.height - 100
+            } else {
+                monitor.work.y + 100
+            },
+        });
+    place(
+        b,
+        Rect {
+            x: away.x - 100,
+            y: away.y - 70,
+            width: 200,
+            height: 140,
+        },
+    );
+    pump_test_messages();
+    for window in [a, b] {
+        c.adopt(window as usize, 0, point);
+        c.float(window as usize, true);
+    }
+    pump_test_messages();
+    if unsafe { SetForegroundWindow(b) == 0 } {
+        println!("Stationary workspace focus check skipped: Windows rejected foreground setup");
+        return Ok(());
+    }
+    for (paused, explicit, expected) in [(false, true, a), (true, true, a), (true, false, b)] {
+        if cursor() != point {
+            println!(
+                "Stationary workspace focus check skipped: user moved the pointer during setup"
+            );
+            return Ok(());
+        }
+        unsafe {
+            SetForegroundWindow(b);
+        }
+        c.paused = paused;
+        c.workspace_focus = Some(WorkspaceFocus::new(c.current, explicit));
+        c.last_cursor = cursor();
+        // Observe only the two disposable windows, never reconcile real app windows.
+        c.dirty = false;
+        c.last_reconcile = Instant::now();
+        c.tick();
+        pump_test_messages();
+        if unsafe { GetForegroundWindow() } != expected {
+            return Err(format!(
+                "stationary workspace focus failed: paused={paused}, explicit={explicit}"
+            )
+            .into());
+        }
+        if expected == a && c.workspace_focus.is_some() {
+            return Err(
+                "workspace focus request did not finish after selecting the hovered window".into(),
+            );
+        }
+    }
+    println!(
+        "Stationary workspace focus passed: switch request focuses without cursor movement, including explicit paused bindings"
+    );
+    Ok(())
+}
+
 fn test_monitor_adoption(a: HWND, b: HWND) -> Result<(), Box<dyn Error>> {
     let mut c = Controller::new(
         Config {
@@ -3646,6 +3834,18 @@ mod drag_tests {
             adoption_monitor(&monitors, 2, pointer, None).unwrap().id,
             "left"
         );
+    }
+    #[test]
+    fn workspace_focus_waits_for_the_destination_and_expires() {
+        let mut focus = WorkspaceFocus::new(42, true);
+        assert!(!focus.ready(41, false, true));
+        assert!(focus.ready(42, false, true));
+        assert!(focus.ready(42, true, false));
+        focus.explicit = false;
+        assert!(!focus.ready(42, true, true));
+        assert!(!focus.ready(42, false, false));
+        focus.expires = Instant::now() - Duration::from_millis(1);
+        assert!(!focus.ready(42, false, true));
     }
     #[test]
     fn first_show_only_positions_new_unmanaged_windows() {
