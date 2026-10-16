@@ -5,6 +5,7 @@ SUPER means the Windows key. Bindings are configurable. Proposed defaults are no
 | Binding | Action | Status |
 | --- | --- | --- |
 | SUPER+Space | Open app-only launcher. | Agreed |
+| SUPER+Q | Launch PowerShell 7 (`C:\Program Files\PowerShell\7\pwsh.exe`). | Agreed during implementation |
 | SUPER+X | Close focused window; suppress Windows power-user menu. | Agreed |
 | SUPER+1..9 | Switch both monitors to workspaces 1..9. | Agreed |
 | SUPER+0 | Switch both monitors to workspace 10. | Agreed |

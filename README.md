@@ -25,6 +25,7 @@ Native workspaces use `winvd` 0.0.49, which targets Windows 11 24H2 build 26100.
 SUPER is either Windows key. Default shortcuts:
 
 - **SUPER+Space:** open Windows Start, after releasing SUPER.
+- **SUPER+Q:** launch PowerShell 7 (`C:\Program Files\PowerShell\7\pwsh.exe`).
 - **SUPER+X:** request normal close, respecting save/cancel dialogs.
 - **SUPER+I:** minimize the focused managed window and reclaim its tile.
 - **SUPER+Shift+I:** restore all minimized eligible windows on the cursor's monitor in the current workspace, including windows already minimized when Tauiler started. Other monitors and workspaces are left alone.

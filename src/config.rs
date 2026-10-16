@@ -128,6 +128,13 @@ impl Default for Config {
         let mut bindings = vec![];
         for (key, action) in [
             ("Space", Action::Launcher),
+            (
+                "Q",
+                Action::Launch {
+                    executable: r"C:\Program Files\PowerShell\7\pwsh.exe".into(),
+                    args: vec![],
+                },
+            ),
             ("X", Action::Close),
             ("V", Action::ToggleFloating),
             ("M", Action::Pause),

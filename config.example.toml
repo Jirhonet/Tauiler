@@ -32,3 +32,7 @@ ignore_classes = []
 # action = "launch"
 # executable = "explorer.exe"
 # args = ["C:\\"]
+# [[bindings]]
+# chord = "SUPER+Q"
+# action = "launch"
+# executable = 'C:\Program Files\PowerShell\7\pwsh.exe'
