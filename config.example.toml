@@ -1,0 +1,34 @@
+# Tauiler configuration. Omitted fields use built-in defaults.
+# Edit then SUPER+Ctrl+R, or choose Reload from the tray icon.
+# SUPER+V toggles floating. SUPER+M pauses tiling; all bindings remain active.
+# The numbered tray icon also toggles pause. Right-click it to quit Tauiler.
+# SUPER+I minimizes. SUPER+Shift+I restores minimized windows on this monitor/workspace.
+broad_override = false
+focus_follows_cursor = true
+remove_caption_buttons = true
+native_workspaces = true
+
+# Optional exact window-class exclusions, e.g. "CASCADIA_HOSTING_WINDOW_CLASS".
+ignore_classes = []
+
+# Rules are evaluated in order; the first matching rule wins.
+# Match fields combine with AND. Executable matching is case-insensitive;
+# class and title_contains matching are case-sensitive.
+# [[rules]]
+# executable = "notepad.exe"
+# mode = "floating" # also "ignore" or "tile"
+
+# When present, bindings replaces the built-in map except reserved SUPER+M pause.
+# Each binding must contain SUPER plus one supported key.
+# Example custom map:
+# [[bindings]]
+# chord = "SUPER+Space"
+# action = "launcher"
+# [[bindings]]
+# chord = "SUPER+X"
+# action = "close"
+# [[bindings]]
+# chord = "SUPER+E"
+# action = "launch"
+# executable = "explorer.exe"
+# args = ["C:\\"]

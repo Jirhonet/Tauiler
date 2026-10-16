@@ -1,0 +1,24 @@
+[package]
+name = "tauiler"
+version = "0.1.0"
+edition = "2024"
+description = "Cursor-directed Windows tiling manager"
+license = "MIT"
+
+[workspace]
+members = ["creation-hook"]
+default-members = [".", "creation-hook"]
+resolver = "3"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_Console", "Win32_System_DataExchange", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_Security"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_System_Com"] }
+winvd = "=0.0.49"
+
+[profile.release]
+lto = true
+strip = true
